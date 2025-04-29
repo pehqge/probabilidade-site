@@ -28,36 +28,29 @@ FILTER_VALUES = ["Painting", "Sculpture"]
 # Cachear o carregamento e pré-processamento dos dados
 @st.cache_data(ttl=3600) # Cache por 1 hora
 def load_and_filter_data(csv_path, filter_column, filter_values):
-    """Carrega o CSV, filtra por tipo de objeto e faz limpeza básica."""
+    """Carrega o CSV e faz limpeza básica sem filtrar por tipo de objeto."""
     try:
         df = pd.read_csv(csv_path, low_memory=False) # low_memory=False pode ajudar com tipos mistos
 
-        # Filtragem principal
-        df_filtered = df[df[filter_column].isin(filter_values)].copy()
+        # Remover a filtragem inicial
+        # df_filtered = df[df[filter_column].isin(filter_values)].copy()
 
         # Limpeza básica (exemplos - ajuste conforme necessário)
         # Converter anos para numérico, tratando erros
-        df_filtered['AccessionYear'] = pd.to_numeric(df_filtered['AccessionYear'], errors='coerce')
+        df['AccessionYear'] = pd.to_numeric(df['AccessionYear'], errors='coerce')
         # Tentar extrair um ano de 'Object Date' (pode ser complexo)
         # Exemplo simples: pegar 4 dígitos seguidos (melhorar se necessário)
-        df_filtered['ObjectYear'] = df_filtered['Object Date'].str.extract(r'(\d{4})', expand=False)
-        df_filtered['ObjectYear'] = pd.to_numeric(df_filtered['ObjectYear'], errors='coerce')
+        df['ObjectYear'] = df['Object Date'].str.extract(r'(\d{4})', expand=False)
+        df['ObjectYear'] = pd.to_numeric(df['ObjectYear'], errors='coerce')
 
         # Tratar colunas categóricas importantes como string e preencher NaNs
         for col in ['Department', 'Culture', 'Artist Display Name', 'Artist Nationality', 'Period', 'Medium', 'Country', 'Classification', 'City', 'Region']:
-            if col in df_filtered.columns:
-                df_filtered[col] = df_filtered[col].astype(str).fillna('Desconhecido').replace('', 'Desconhecido')
+            if col in df.columns:
+                df[col] = df[col].astype(str).fillna('Desconhecido').replace('', 'Desconhecido')
             else:
                 st.warning(f"Coluna '{col}' esperada não encontrada no CSV.")
 
-
-        # Remover colunas com muitos valores únicos e irrelevantes para análise geral (exemplo)
-        # cols_to_drop = ['Object ID', 'Gallery Number', 'Portfolio', 'Constituent ID', 'Link Resource', 'Object Wikidata URL', 'Tags', 'Tags AAT URL', 'Tags Wikidata URL', 'Metadata Date', 'Repository']
-        # for col in cols_to_drop:
-        #     if col in df_filtered.columns:
-        #         df_filtered = df_filtered.drop(columns=[col])
-
-        return df_filtered
+        return df
 
     except FileNotFoundError:
         st.error(f"Erro: Arquivo CSV não encontrado em '{csv_path}'. Certifique-se que ele está no mesmo diretório.")
@@ -76,10 +69,10 @@ def generate_insights(df):
     insights.append(f"**Total de Obras Analisadas (Pinturas/Esculturas):** {total_obras}")
 
     # Contagem por tipo
-    tipo_counts = df[FILTER_COLUMN].value_counts()
-    insights.append("**Distribuição por Tipo:**")
-    for tipo, count in tipo_counts.items():
-        insights.append(f"- {tipo}: {count} ({count/total_obras:.1%})")
+    # tipo_counts = df[FILTER_COLUMN].value_counts()
+    # insights.append("**Distribuição por Tipo:**")
+    # for tipo, count in tipo_counts.items():
+    #     insights.append(f"- {tipo}: {count} ({count/total_obras:.1%})")
 
     # Top Departamentos
     if 'Department' in df.columns:
