@@ -10,6 +10,8 @@ import gzip
 import shutil
 import atexit
 import json
+import re
+import io
 from google import genai
 from google.genai import types
 
@@ -576,250 +578,340 @@ def criar_visualizacao_personalizada():
     else:
         st.warning("Não há dados suficientes para criar o gráfico selecionado")
 
-# Função para executar SQL personalizado
+# Função para executar SQL personalizado com ajuda da IA
 def executar_sql_personalizado():
-    st.subheader("Consulta SQL Personalizada")
-    
-    # Exemplos de consultas
-    st.markdown("""
-    **Exemplos de consultas:**
-    ```sql
-    -- Contagem de objetos por departamento
-    SELECT Department, COUNT(*) as Count 
-    FROM metobjects 
-    WHERE Department != '' 
-    GROUP BY Department 
-    ORDER BY Count DESC;
-    
-    -- Artistas com mais obras
-    SELECT "Artist Display Name", COUNT(*) as Count 
-    FROM metobjects 
-    WHERE "Artist Display Name" != '' 
-    GROUP BY "Artist Display Name" 
-    ORDER BY Count DESC;
-    
-    -- Pinturas do século XIX
-    SELECT "Object Number", Title, "Artist Display Name", "Object Date"
-    FROM metobjects 
-    WHERE "Object Name" LIKE '%painting%' 
-    AND "Object Date" LIKE '%19th Century%';
-    ```
-    """)
-    
-    # Editor de consulta
-    query = st.text_area(
-        "Digite sua consulta SQL:",
-        height=200,
-        help="Escreva uma consulta SQL para executar no banco de dados"
-    )
-    
-    if st.button("Executar Consulta"):
-        if query:
-            # Executar a consulta
-            df = executar_consulta(query)
-            
-            # Exibir os resultados
-            if len(df) > 0:
-                st.dataframe(df)
-                
-                # Opção para baixar como CSV
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Baixar como CSV",
-                    data=csv,
-                    file_name="resultado_consulta.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("A consulta não retornou resultados")
-        else:
-            st.error("Por favor, digite uma consulta SQL")
+    st.subheader("⚙️ Consulta SQL Personalizada com Assistente IA")
 
-# Função para a interface de consulta com IA
-def consulta_com_ia():
-    st.subheader("🤖 Consulta com Inteligência Artificial")
-    
-    # Exemplos de consultas
-    st.markdown("""
-    ### 💡 Exemplos do que você pode perguntar:
-    
-    - Mostre todas as pinturas de Claude Monet
-    - Quais são os 10 artistas com mais obras no museu?
-    - Quantas esculturas egípcias existem na coleção?
-    - Conte o número de objetos por século
-    - Quais são os objetos mais antigos da coleção?
-    """)
-    
-    # Entrada da pergunta
-    pergunta = st.text_area(
-        "Digite sua pergunta em linguagem natural:",
+    # Inicializar o estado da sessão para a consulta, se necessário
+    if 'sql_query' not in st.session_state:
+        st.session_state.sql_query = """
+-- Conte o número de objetos por departamento
+SELECT Department, COUNT(*) as Count 
+FROM metobjects 
+WHERE Department != '' 
+GROUP BY Department 
+ORDER BY Count DESC;"""
+
+    st.markdown("### Gere SQL com IA")
+    pergunta_ia = st.text_area(
+        "Descreva em linguagem natural o que você quer consultar:",
         height=100,
         placeholder="Ex: Mostre todas as pinturas de Vincent van Gogh ordenadas por data"
     )
-    
-    # Inicializar variáveis na sessão se não existirem
-    if "consulta_sql_gerada" not in st.session_state:
-        st.session_state.consulta_sql_gerada = ""
-    if "mostrar_resultados" not in st.session_state:
-        st.session_state.mostrar_resultados = False
-    
-    # Dividir a tela em duas colunas apenas para a entrada e informações
-    col1, col2 = st.columns([1, 2])
-    
-    # Primeira coluna para consulta e botões
-    with col1:
-        # Botão para consultar a IA
-        if st.button("Consultar IA", type="primary"):
-            if pergunta:
-                with st.spinner("A IA está processando sua consulta..."):
+
+    if st.button("🤖 Gerar SQL com IA"):
+        if pergunta_ia:
+            with st.spinner("A IA está processando sua consulta..."):
+                try:
                     # Obter informações do esquema
                     schema_info = obter_schema_info()
-                    
                     # Consultar a IA
-                    resposta = consultar_ia(pergunta, schema_info)
+                    resposta = consultar_ia(pergunta_ia, schema_info)
                     
                     # Verificar se a resposta parece ser SQL
                     is_sql_query = "SELECT" in resposta.upper() and "FROM" in resposta.upper()
                     
                     if is_sql_query:
-                        # Extrair apenas a consulta SQL se houver texto adicional
-                        # Encontrar a consulta SQL entre os sinais SELECT e ;
-                        import re
-                        sql_match = re.search(r'(SELECT.+?);', resposta, re.DOTALL | re.IGNORECASE)
-                        
+                        # Extrair apenas a consulta SQL
+                        sql_match = re.search(r'(SELECT.+?;)', resposta, re.DOTALL | re.IGNORECASE)
                         if sql_match:
-                            consulta_sql = sql_match.group(1) + ";"
+                            consulta_sql_gerada = sql_match.group(1)
                         else:
-                            consulta_sql = resposta.strip()
+                            # Tentar pegar tudo se não encontrar o padrão exato
+                            consulta_sql_gerada = resposta.strip()
                         
-                        # Armazenar a consulta gerada na sessão
-                        st.session_state.consulta_sql_gerada = consulta_sql
-                        st.session_state.resposta_texto = ""
+                        st.session_state.sql_query = consulta_sql_gerada
+                        st.success("Consulta SQL gerada e inserida abaixo!")
+                        # Força o rerender para atualizar a text_area
+                        st.rerun() 
                     else:
-                        # Armazenar resposta textual
-                        st.session_state.resposta_texto = resposta
-                        st.session_state.consulta_sql_gerada = ""
-                    
-                    # Resetar flag de resultados
-                    st.session_state.mostrar_resultados = False
-            else:
-                st.error("Por favor, digite uma pergunta.")
-    
-        # Se temos uma consulta SQL gerada, mostrar e permitir executá-la
-        if st.session_state.consulta_sql_gerada:
-            st.subheader("Consulta SQL gerada:")
-            st.code(st.session_state.consulta_sql_gerada, language="sql")
-            
-            # Botão para executar a consulta
-            if st.button("Executar Consulta SQL"):
-                st.session_state.mostrar_resultados = True
-                st.rerun()
-        
-        # Se temos uma resposta textual, mostrar
-        if "resposta_texto" in st.session_state and st.session_state.resposta_texto:
-            st.subheader("Resposta:")
-            st.write(st.session_state.resposta_texto)
-    
-    # Segunda coluna para informações sobre o banco de dados
-    with col2:
-        # Mostrar dicas sobre a estrutura do banco
-        st.subheader("Estrutura do Banco de Dados")
-        st.markdown("""
-        O banco de dados contém a tabela `metobjects` com informações sobre a coleção 
-        do Metropolitan Museum of Art.
-        
-        **Colunas principais:**
-        - `Object ID`: Identificador único do objeto
-        - `Title`: Título da obra
-        - `Artist Display Name`: Nome do artista
-        - `Object Date`: Data da obra
-        - `Department`: Departamento do museu
-        - `Culture`: Cultura associada à obra
-        - `Medium`: Material/meio utilizado
-        - `Classification`: Classificação da obra
-        - `Object Name`: Tipo do objeto (pintura, escultura, etc.)
-        - `Is Public Domain`: Se a obra está em domínio público
-        """)
-        
-        # Mostrar alguns exemplos de valores
-        with st.expander("Ver exemplos de valores", expanded=False):
-            # Departamentos
-            st.subheader("Departamentos")
-            df_dept = executar_consulta("SELECT DISTINCT Department FROM metobjects WHERE Department != '' LIMIT 20")
-            st.dataframe(df_dept)
-            
-            # Culturas
-            st.subheader("Culturas")
-            df_cult = executar_consulta("SELECT DISTINCT Culture FROM metobjects WHERE Culture != '' LIMIT 20")
-            st.dataframe(df_cult)
-            
-            # Objetos
-            st.subheader("Tipos de Objetos")
-            df_obj = executar_consulta("SELECT DISTINCT \"Object Name\" FROM metobjects WHERE \"Object Name\" != '' LIMIT 20")
-            st.dataframe(df_obj)
-    
-    # Mostrar resultados em tela cheia (fora das colunas)
-    if st.session_state.mostrar_resultados and st.session_state.consulta_sql_gerada:
-        st.markdown("---")  # Separador horizontal
-        
-        try:
-            # Executar a consulta
-            df = executar_consulta(st.session_state.consulta_sql_gerada)
-            
-            # Exibir os resultados
-            if len(df) > 0:
-                st.subheader("Resultados:")
-                st.dataframe(df, use_container_width=True)  # Usar toda a largura disponível
-                
-                # Opção para baixar como CSV
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Baixar como CSV",
-                    data=csv,
-                    file_name="resultado_ia.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("A consulta não retornou resultados")
-        except Exception as e:
-            st.error(f"Erro ao executar a consulta: {e}")
+                        st.warning(f"A IA retornou uma resposta que não parece SQL: {resposta}")
+                except Exception as e:
+                    st.error(f"Erro ao consultar a IA: {e}")
+        else:
+            st.error("Por favor, digite uma descrição para a IA gerar o SQL.")
 
-# Interface principal
+    st.markdown("### Editor SQL")
+    # Usar a chave explícita ligada ao session_state para atualização programática
+    st.session_state.sql_query = st.text_area(
+        "Edite ou digite sua consulta SQL aqui:",
+        value=st.session_state.sql_query, 
+        height=250,
+        key='sql_editor' # Chave para controle
+    )
+    
+    if st.button("Executar Consulta"):
+        query_para_executar = st.session_state.sql_query
+        if query_para_executar:
+            with st.spinner("Executando consulta..."):
+                try:
+                    # Executar a consulta
+                    df = executar_consulta(query_para_executar)
+                    
+                    # Exibir os resultados
+                    if not df.empty:
+                        st.subheader("Resultados da Consulta")
+                        st.dataframe(df)
+                        
+                        # Opção para baixar como CSV
+                        csv = df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Baixar como CSV",
+                            data=csv,
+                            file_name="resultado_consulta.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.info("A consulta não retornou resultados.")
+                except Exception as e:
+                    st.error(f"Erro ao executar a consulta SQL: {e}")
+        else:
+            st.error("A caixa de consulta SQL está vazia.")
+
+# Função para consultar a API do Gemini para analisar um DataFrame
+def consultar_ia_dataframe(pergunta, df):
+    try:
+        API_KEY = st.secrets["API_KEY"]
+        client = genai.Client(api_key=API_KEY)
+        
+        # Preparar informações sobre o DataFrame para o prompt
+        # Usar io.StringIO para capturar a saída de df.info()
+        buffer = io.StringIO()
+        df.info(buf=buffer)
+        df_info_str = buffer.getvalue()
+        
+        prompt = f"""
+        Você é um assistente de análise de dados IA. Você está analisando um DataFrame pandas carregado pelo usuário.
+
+        Informações sobre o DataFrame ('df'):
+        Número de linhas: {len(df)}
+        Número de colunas: {len(df.columns)}
+
+        Informações das colunas (df.info()):
+        {df_info_str}
+
+        Primeiras 5 linhas (df.head()):
+        {df.head().to_string()}
+
+        A pergunta do usuário é: "{pergunta}"
+
+        Instruções:
+        1. Responda à pergunta do usuário da forma mais clara e concisa possível.
+        2. Se a pergunta exigir uma análise que gere um resultado tabular (como uma contagem de valores, descrição estatística, correlação, etc.), gere APENAS o código Python necessário usando o DataFrame 'df' (que já está disponível para você). Use pandas para manipulação e coloque o resultado final em uma variável chamada 'result_df'. Exemplo: result_df = df['Coluna'].value_counts().reset_index()
+        3. Se a pergunta exigir uma visualização (gráfico de barras, dispersão, pizza, etc.), gere APENAS o código Python necessário usando plotly.express (importado como 'px') ou plotly.graph_objects (importado como 'go'). Use o DataFrame 'df'. Coloque a figura gerada em uma variável chamada 'fig'. Exemplo: fig = px.histogram(df, x='NomeDaColuna')
+        4. Se for gerar código Python, NÃO adicione explicações, apenas o bloco de código Python formatado entre ```python e ```.
+        5. NÃO use st.write, st.dataframe, st.plotly_chart ou qualquer outra função do Streamlit ('st') dentro do código gerado. Apenas calcule 'result_df' ou 'fig'.
+        6. Se a pergunta for geral ou não puder ser respondida com o código, forneça uma resposta textual direta.
+        7. Para análises estatísticas comuns, você pode usar df.describe().
+        8. Se precisar de colunas específicas, use os nomes exatos das colunas fornecidos em df.info() e df.head(). Lembre-se que nomes de colunas podem ter espaços ou caracteres especiais, use df['Nome Coluna Com Espaço'].
+
+        Resposta:
+        """
+        
+        model = "gemini-1.5-flash-latest" # Usar um modelo mais capaz para análise e código
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+        
+        generate_content_config = types.GenerateContentConfig(
+            temperature=0.3,
+            top_p=0.95,
+            top_k=40,
+            max_output_tokens=4096, # Aumentar tokens para código + explicação potencial
+            response_mime_type="text/plain",
+        )
+        
+        response = client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=generate_content_config,
+        )
+        
+        return response.text
+    except Exception as e:
+        st.error(f"Erro ao consultar a IA: {e}")
+        return f"Erro: {e}"
+
+# Função para a página do Chatbot CSV Analyzer
+def chatbot_csv_analyzer():
+    st.subheader("🤖 Chatbot Analisador de CSV")
+
+    # Inicializar estado da sessão se necessário
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+    if "uploaded_df" not in st.session_state:
+        st.session_state.uploaded_df = None
+    if "file_uploader_key" not in st.session_state:
+         st.session_state.file_uploader_key = 0 # Para resetar o uploader
+
+    uploaded_file = st.file_uploader(
+        "Carregue seu arquivo CSV aqui", 
+        type="csv", 
+        key=f"uploader_{st.session_state.file_uploader_key}"
+    )
+
+    if uploaded_file is not None:
+        # Tentar ler o CSV e armazenar no estado da sessão
+        if st.session_state.uploaded_df is None: # Só carrega se ainda não tiver carregado
+            try:
+                # Ler o arquivo carregado em um DataFrame
+                df = pd.read_csv(uploaded_file)
+                st.session_state.uploaded_df = df
+                st.session_state.chat_messages = [] # Limpar chat ao carregar novo arquivo
+                st.success("Arquivo CSV carregado com sucesso!")
+                 # Limpar o uploader incrementando a chave
+                st.session_state.file_uploader_key += 1
+                st.rerun() # Força o rerender para mostrar o estado inicial do chat e info
+            except Exception as e:
+                st.error(f"Erro ao ler o arquivo CSV: {e}")
+                st.session_state.uploaded_df = None # Reset em caso de erro
+    
+    # Se um DataFrame estiver carregado
+    if st.session_state.uploaded_df is not None:
+        df = st.session_state.uploaded_df
+        
+        # Mostrar informações básicas sobre o DF
+        st.markdown("### Informações do CSV Carregado")
+        st.markdown(f"**Nome do arquivo:** {uploaded_file.name if uploaded_file else 'N/A'}")
+        st.markdown(f"**Número de Linhas:** {len(df)}")
+        st.markdown(f"**Número de Colunas:** {len(df.columns)}")
+        
+        with st.expander("Ver Nomes das Colunas"):
+             st.write(df.columns.tolist())
+        with st.expander("Ver Primeiras Linhas (Head)"):
+            st.dataframe(df.head())
+        
+        st.markdown("---")
+        st.markdown("### Chat com IA")
+
+        # Exibir histórico do chat
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                # Se for código Python na mensagem da IA, formatar como código
+                if message["role"] == "assistant" and "```python" in message["content"]:
+                     code_match = re.search(r"```python\n(.*)\n```", message["content"], re.DOTALL)
+                     if code_match:
+                         st.code(code_match.group(1), language="python")
+                     else: # Caso não consiga extrair, mostrar como texto normal
+                         st.markdown(message["content"])
+                # Se for resultado (df ou fig), exibir diretamente
+                elif "result_df" in message:
+                     st.dataframe(message["result_df"])
+                elif "fig" in message:
+                     st.plotly_chart(message["fig"], use_container_width=True)
+                else:
+                    st.markdown(message["content"])
+
+        # Input do usuário
+        if prompt := st.chat_input("Faça uma pergunta sobre seus dados..."):
+            # Adicionar mensagem do usuário ao histórico e exibir
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Gerar resposta da IA
+            with st.chat_message("assistant"):
+                with st.spinner("Pensando..."):
+                    response_text = consultar_ia_dataframe(prompt, df)
+                    
+                    # Verificar se a IA gerou código Python
+                    code_to_execute = None
+                    if "```python" in response_text:
+                        code_match = re.search(r"```python\n(.*)\n```", response_text, re.DOTALL)
+                        if code_match:
+                            code_to_execute = code_match.group(1).strip()
+                            # Adicionar mensagem da IA (código) ao histórico
+                            st.session_state.chat_messages.append({"role": "assistant", "content": response_text}) 
+                            st.code(code_to_execute, language="python") # Mostra o código gerado
+                        else:
+                             # Se não conseguiu extrair, tratar como texto normal
+                             st.session_state.chat_messages.append({"role": "assistant", "content": response_text})
+                             st.markdown(response_text)
+                    else:
+                        # Resposta textual normal da IA
+                        st.session_state.chat_messages.append({"role": "assistant", "content": response_text})
+                        st.markdown(response_text)
+
+                    # Se houver código para executar
+                    if code_to_execute:
+                        try:
+                            # Preparar o ambiente de execução
+                            # Passamos o DataFrame 'df', pandas 'pd', plotly 'px'/'go', streamlit 'st', numpy 'np'
+                            # e locals() para capturar as variáveis resultantes ('result_df', 'fig')
+                            local_vars = {}
+                            global_vars = {'pd': pd, 'px': px, 'go': go, 'np': np, 'st': st, 'df': df}
+                            exec(code_to_execute, global_vars, local_vars)
+                            
+                            # Verificar se 'result_df' ou 'fig' foram criados pela execução
+                            if 'result_df' in local_vars:
+                                result_df_output = local_vars['result_df']
+                                st.dataframe(result_df_output)
+                                # Adicionar o resultado ao histórico para persistência
+                                st.session_state.chat_messages.append({"role": "assistant", "result_df": result_df_output})
+                            elif 'fig' in local_vars:
+                                fig_output = local_vars['fig']
+                                st.plotly_chart(fig_output, use_container_width=True)
+                                # Adicionar o resultado ao histórico para persistência
+                                st.session_state.chat_messages.append({"role": "assistant", "fig": fig_output})
+
+                        except Exception as exec_e:
+                            st.error(f"Erro ao executar o código gerado pela IA: {exec_e}")
+                            st.session_state.chat_messages.append({"role": "assistant", "content": f"Erro ao executar código: {exec_e}"})
+            # st.rerun() # Rerun pode ser opcional aqui, pois o chat atualiza
+
+    else:
+        # Mensagem inicial se nenhum arquivo foi carregado ainda
+        st.info("Por favor, carregue um arquivo CSV para começar a análise.")
+        # Limpar estado se o usuário remover o arquivo (ou para garantir limpeza inicial)
+        st.session_state.uploaded_df = None
+        st.session_state.chat_messages = []
+
+# Interface principal (modificada para adicionar a nova página)
 def main():
     # Barra lateral
     st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/7/7a/The_MET_logo.png", width=200)
     st.sidebar.title("Navegação")
     
-    # Menu principal
+    # Menu principal - ADICIONAR "Chatbot CSV"
     pagina = st.sidebar.radio(
         "Escolha uma seção:",
         ["Visão Geral", "Filtrar Objetos", "Análise por Departamento", 
          "Análise por Tipo de Objeto", "Análise por Cultura", 
-         "Busca por ID", "Visualização Personalizada", "Consulta SQL", "Consulta com IA"]
+         "Busca por ID", "Visualização Personalizada", "Consulta SQL", 
+         "Chatbot CSV"] # Adicionado aqui
     )
     
-    # Obter estatísticas gerais
-    stats = obter_estatisticas()
-    
+    # Obter estatísticas gerais (só para a parte do MetObjects)
+    stats = {}
+    if os.path.exists(DB_PATH): # Só calcula se o DB original existir
+         try:
+              stats = obter_estatisticas()
+         except Exception as e:
+              print(f"Não foi possível calcular estatísticas iniciais: {e}")
+              stats = {'total_objetos': 'N/A', 'total_departamentos': 'N/A', 
+                       'total_culturas': 'N/A', 'total_artistas': 'N/A', 'total_tipos_objetos': 'N/A'}
+    else:
+         stats = {'total_objetos': 'N/A', 'total_departamentos': 'N/A', 
+                  'total_culturas': 'N/A', 'total_artistas': 'N/A', 'total_tipos_objetos': 'N/A'}
+
     # Mostrar informações do banco de dados na barra lateral
-    st.sidebar.subheader("Informações do Banco")
-    
-    # Exibir informações sobre o arquivo do banco
-    tamanho_db = os.path.getsize(DB_PATH) / (1024 * 1024)  # Tamanho em MB
+    st.sidebar.subheader("Informações do Banco (MetObjects)")
+    if os.path.exists(DB_PATH):
+        tamanho_db = os.path.getsize(DB_PATH) / (1024 * 1024)  # Tamanho em MB
+        st.sidebar.info(f"""
+        💾 **Banco de Dados:**
+        - Arquivo: {DB_PATH}
+        - Tamanho: {tamanho_db:.2f} MB
+        - Status: Temporário (será excluído ao fechar)
+        """)
+    else:
+        st.sidebar.warning("Banco de dados MetObjects não encontrado.")
+
     st.sidebar.info(f"""
-    💾 **Banco de Dados:**
-    - Arquivo: {DB_PATH}
-    - Tamanho: {tamanho_db:.2f} MB
-    - Status: Temporário (será excluído ao fechar)
-    """)
-    
-    st.sidebar.info(f"""
-    📊 **Estatísticas:**
-    - Total de objetos: {stats['total_objetos']:,}
-    - Departamentos: {stats['total_departamentos']}
-    - Culturas: {stats['total_culturas']}
-    - Artistas: {stats['total_artistas']:,}
-    - Tipos de objetos: {stats['total_tipos_objetos']:,}
+    📊 **Estatísticas (MetObjects):**
+    - Total de objetos: {stats.get('total_objetos', 'N/A')}
+    - Departamentos: {stats.get('total_departamentos', 'N/A')}
+    - Culturas: {stats.get('total_culturas', 'N/A')}
+    - Artistas: {stats.get('total_artistas', 'N/A')}
+    - Tipos de objetos: {stats.get('total_tipos_objetos', 'N/A')}
     """)
     
     # Footer na barra lateral
@@ -827,264 +919,181 @@ def main():
     st.sidebar.markdown(
         "Desenvolvido para análise da coleção do [Metropolitan Museum of Art](https://www.metmuseum.org/)"
     )
+    st.sidebar.markdown("Funcionalidade de Chatbot CSV adicionada.")
     
     # Conteúdo principal
     if pagina == "Visão Geral":
         st.subheader("📊 Visão Geral da Coleção")
-        
-        # Métricas em cards
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total de Objetos", f"{stats['total_objetos']:,}")
-        col2.metric("Departamentos", stats['total_departamentos'])
-        col3.metric("Culturas", stats['total_culturas'])
-        col4.metric("Artistas", f"{stats['total_artistas']:,}")
-        
-        st.markdown("---")
-        
-        # Mostrar algumas visualizações principais
-        st.subheader("Distribuição por Departamento")
-        fig_dept, df_dept = visualizar_departamentos()
-        st.plotly_chart(fig_dept, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # Distribuição por tipo de objeto
-        st.subheader("Top 20 Tipos de Objetos")
-        fig_tipo, df_tipo = visualizar_objetos_por_tipo()
-        st.plotly_chart(fig_tipo, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # Distribuição por cultura
-        st.subheader("Principais Culturas")
-        fig_cult, df_cult = visualizar_culturas()
-        st.plotly_chart(fig_cult, use_container_width=True)
-    
-    elif pagina == "Filtrar Objetos":
-        st.subheader("🔍 Filtrar Objetos")
-        
-        # Função para filtrar
-        df_filtrado = filtrar_objetos()
-        
-        # Mostrar resultados
-        if len(df_filtrado) > 0:
-            st.subheader(f"Resultados: {len(df_filtrado)} objetos encontrados")
+        if stats.get('total_objetos') != 'N/A':
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total de Objetos", f"{stats['total_objetos']:,}")
+            col2.metric("Departamentos", stats['total_departamentos'])
+            col3.metric("Culturas", stats['total_culturas'])
+            col4.metric("Artistas", f"{stats['total_artistas']:,}")
             
-            # Selecionar colunas para exibir
-            colunas_padrao = [
-                "Object Number", "Object Name", "Title", "Artist Display Name", 
-                "Object Date", "Culture", "Department"
-            ]
+            st.markdown("---")
             
-            colunas_disponiveis = df_filtrado.columns.tolist()
-            colunas_selecionadas = st.multiselect(
-                "Selecione as colunas para exibir:", 
-                colunas_disponiveis,
-                default=colunas_padrao
-            )
+            st.subheader("Distribuição por Departamento")
+            fig_dept, df_dept = visualizar_departamentos()
+            st.plotly_chart(fig_dept, use_container_width=True)
             
-            if colunas_selecionadas:
-                st.dataframe(df_filtrado[colunas_selecionadas])
-                
-                # Opção para baixar resultados
-                csv = df_filtrado[colunas_selecionadas].to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Baixar como CSV",
-                    data=csv,
-                    file_name="objetos_filtrados.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.warning("Selecione pelo menos uma coluna para exibir")
+            st.markdown("---")
+            
+            st.subheader("Top 50 Tipos de Objetos") 
+            fig_tipo, df_tipo = visualizar_objetos_por_tipo()
+            st.plotly_chart(fig_tipo, use_container_width=True)
+            
+            st.markdown("---")
+            
+            st.subheader("Principais Culturas")
+            fig_cult, df_cult = visualizar_culturas()
+            st.plotly_chart(fig_cult, use_container_width=True)
         else:
-            st.info("Nenhum objeto encontrado com os filtros selecionados")
-    
+            st.warning("Banco de dados MetObjects não disponível para exibir a visão geral.")
+
+    elif pagina == "Filtrar Objetos":
+        st.subheader("Filtrar Objetos")
+        if os.path.exists(DB_PATH):
+             df_filtrado = filtrar_objetos()
+             if not df_filtrado.empty:
+                 st.subheader(f"Resultados: {len(df_filtrado)} objetos encontrados")
+                 colunas_padrao = ["Object Number", "Object Name", "Title", "Artist Display Name", "Object Date", "Culture", "Department"]
+                 colunas_disponiveis = df_filtrado.columns.tolist()
+                 colunas_padrao_existentes = [col for col in colunas_padrao if col in colunas_disponiveis]
+                 colunas_selecionadas = st.multiselect("Selecione as colunas para exibir:", colunas_disponiveis, default=colunas_padrao_existentes)
+                 if colunas_selecionadas:
+                     st.dataframe(df_filtrado[colunas_selecionadas])
+                     csv = df_filtrado[colunas_selecionadas].to_csv(index=False).encode('utf-8')
+                     st.download_button(label="Baixar como CSV", data=csv, file_name="objetos_filtrados.csv", mime="text/csv")
+                 elif not colunas_disponiveis:
+                     st.warning("O resultado da filtragem não contém colunas.")
+                 else:
+                     st.warning("Selecione pelo menos uma coluna para exibir")
+             else:
+                 st.info("Nenhum objeto encontrado com os filtros selecionados")
+        else:
+             st.warning("Banco de dados MetObjects não disponível para filtrar objetos.")
+
     elif pagina == "Análise por Departamento":
         st.subheader("🏛️ Análise por Departamento")
-        
-        # Visualização de departamentos
-        fig_dept, df_dept = visualizar_departamentos()
-        st.plotly_chart(fig_dept, use_container_width=True)
-        
-        # Dados em tabela
-        st.subheader("Dados por Departamento")
-        st.dataframe(df_dept)
-        
-        # Análise adicional: Objetos mais comuns por departamento
-        st.subheader("Objetos mais comuns por Departamento")
-        
-        # Selecionar departamento
-        departamento = st.selectbox(
-            "Selecione um departamento:", 
-            obter_valores_unicos("Department")
-        )
-        
-        # Consulta para tipos de objetos no departamento
-        query = f"""
-        SELECT "Object Name", COUNT(*) as Count 
-        FROM metobjects 
-        WHERE Department = '{departamento}'
-        GROUP BY "Object Name" 
-        ORDER BY Count DESC
-        LIMIT 10
-        """
-        
-        df_objetos = executar_consulta(query)
-        
-        # Mostrar gráfico
-        fig = px.bar(
-            df_objetos, 
-            x='Object Name', 
-            y='Count',
-            color='Count',
-            color_continuous_scale='Teal',
-            title=f'Top 10 Tipos de Objetos no Departamento: {departamento}'
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        if os.path.exists(DB_PATH):
+             fig_dept, df_dept = visualizar_departamentos()
+             st.plotly_chart(fig_dept, use_container_width=True)
+             st.subheader("Dados por Departamento")
+             st.dataframe(df_dept)
+             st.subheader("Objetos mais comuns por Departamento")
+             departamentos_validos = obter_valores_unicos("Department")
+             if departamentos_validos:
+                 departamento = st.selectbox("Selecione um departamento:", departamentos_validos)
+                 query = f'''SELECT "Object Name", COUNT(*) as Count FROM metobjects WHERE Department = '{departamento}' AND "Object Name" != '' GROUP BY "Object Name" ORDER BY Count DESC LIMIT 10'''
+                 df_objetos = executar_consulta(query)
+                 if not df_objetos.empty:
+                     fig = px.bar(df_objetos, x='Object Name', y='Count', color='Count', color_continuous_scale='Teal', title=f'Top 10 Tipos de Objetos no Departamento: {departamento}')
+                     st.plotly_chart(fig, use_container_width=True)
+                 else:
+                     st.info(f"Não foram encontrados tipos de objeto para o departamento '{departamento}'.")
+             else:
+                 st.warning("Não há departamentos disponíveis para análise.")
+        else:
+             st.warning("Banco de dados MetObjects não disponível para análise por departamento.")
         
     elif pagina == "Análise por Tipo de Objeto":
         st.subheader("🖼️ Análise por Tipo de Objeto")
-        
-        # Visualização de tipos de objetos
-        fig_tipo, df_tipo = visualizar_objetos_por_tipo()
-        st.plotly_chart(fig_tipo, use_container_width=True)
-        
-        # Dados em tabela
-        st.subheader("Dados por Tipo de Objeto")
-        st.dataframe(df_tipo)
-        
-        # Análise adicional: Departamentos por tipo de objeto
-        st.subheader("Departamentos por Tipo de Objeto")
-        
-        # Buscar os tipos de objeto mais comuns
-        tipos_comuns = obter_valores_unicos("Object Name")  # Remover limitação
-        
-        # Selecionar tipo de objeto
-        tipo_objeto = st.selectbox(
-            "Selecione um tipo de objeto:", 
-            tipos_comuns
-        )
-        
-        # Consulta para departamentos com esse tipo
-        query = f"""
-        SELECT Department, COUNT(*) as Count 
-        FROM metobjects 
-        WHERE "Object Name" = '{tipo_objeto}'
-        AND Department != ''
-        GROUP BY Department 
-        ORDER BY Count DESC
-        LIMIT 10
-        """
-        
-        df_depts = executar_consulta(query)
-        
-        # Mostrar gráfico
-        fig = px.pie(
-            df_depts, 
-            values='Count', 
-            names='Department',
-            title=f'Distribuição de {tipo_objeto} por Departamento',
-            hole=0.3
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
+        if os.path.exists(DB_PATH):
+             fig_tipo, df_tipo = visualizar_objetos_por_tipo()
+             st.plotly_chart(fig_tipo, use_container_width=True)
+             st.subheader("Dados por Tipo de Objeto")
+             st.dataframe(df_tipo)
+             st.subheader("Departamentos por Tipo de Objeto")
+             tipos_comuns = obter_valores_unicos("Object Name")
+             if tipos_comuns:
+                 tipo_objeto = st.selectbox("Selecione um tipo de objeto:", tipos_comuns)
+                 query = f'''SELECT Department, COUNT(*) as Count FROM metobjects WHERE "Object Name" = '{tipo_objeto}' AND Department != '' GROUP BY Department ORDER BY Count DESC LIMIT 10'''
+                 df_depts = executar_consulta(query)
+                 if not df_depts.empty:
+                     fig = px.pie(df_depts, values='Count', names='Department', title=f'Distribuição de {tipo_objeto} por Departamento (Top 10)', hole=0.3)
+                     st.plotly_chart(fig, use_container_width=True)
+                 else:
+                     st.info(f"Não foram encontrados departamentos para o tipo de objeto '{tipo_objeto}'.")
+             else:
+                 st.warning("Não há tipos de objeto disponíveis para análise.")
+        else:
+             st.warning("Banco de dados MetObjects não disponível para análise por tipo de objeto.")
+
     elif pagina == "Análise por Cultura":
         st.subheader("🌎 Análise por Cultura")
-        
-        # Visualização de culturas
-        fig_cult, df_cult = visualizar_culturas()
-        st.plotly_chart(fig_cult, use_container_width=True)
-        
-        # Dados em tabela
-        st.subheader("Dados por Cultura")
-        st.dataframe(df_cult)
-        
-        # Análise adicional: Objetos mais comuns por cultura
-        st.subheader("Objetos mais comuns por Cultura")
-        
-        # Selecionar cultura
-        cultura = st.selectbox(
-            "Selecione uma cultura:", 
-            obter_valores_unicos("Culture")
-        )
-        
-        # Consulta para tipos de objetos na cultura
-        query = f"""
-        SELECT "Object Name", COUNT(*) as Count 
-        FROM metobjects 
-        WHERE Culture = '{cultura}'
-        GROUP BY "Object Name" 
-        ORDER BY Count DESC
-        LIMIT 10
-        """
-        
-        df_objetos = executar_consulta(query)
-        
-        # Mostrar gráfico
-        fig = px.bar(
-            df_objetos, 
-            x='Object Name', 
-            y='Count',
-            color='Count',
-            color_continuous_scale='Viridis',
-            title=f'Top 10 Tipos de Objetos na Cultura: {cultura}'
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
+        if os.path.exists(DB_PATH):
+             fig_cult, df_cult = visualizar_culturas()
+             st.plotly_chart(fig_cult, use_container_width=True)
+             st.subheader("Dados por Cultura")
+             st.dataframe(df_cult)
+             st.subheader("Objetos mais comuns por Cultura")
+             culturas_validas = obter_valores_unicos("Culture")
+             if culturas_validas:
+                 cultura = st.selectbox("Selecione uma cultura:", culturas_validas)
+                 query = f'''SELECT "Object Name", COUNT(*) as Count FROM metobjects WHERE Culture = '{cultura}' AND "Object Name" != '' GROUP BY "Object Name" ORDER BY Count DESC LIMIT 10'''
+                 df_objetos = executar_consulta(query)
+                 if not df_objetos.empty:
+                     fig = px.bar(df_objetos, x='Object Name', y='Count', color='Count', color_continuous_scale='Viridis', title=f'Top 10 Tipos de Objetos na Cultura: {cultura}')
+                     st.plotly_chart(fig, use_container_width=True)
+                 else:
+                     st.info(f"Não foram encontrados tipos de objeto para a cultura '{cultura}'.")
+             else:
+                  st.warning("Não há culturas disponíveis para análise.")
+        else:
+             st.warning("Banco de dados MetObjects não disponível para análise por cultura.")
+
     elif pagina == "Busca por ID":
         st.subheader("🔎 Busca por ID")
-        
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            # Input para ID
-            object_id = st.text_input("Digite o ID do objeto:")
-            
-            if st.button("Buscar"):
-                if object_id:
-                    visualizar_objeto(object_id)
+        if os.path.exists(DB_PATH):
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                object_id = st.text_input("Digite o ID do objeto:")
+                if st.button("Buscar"):
+                    if object_id:
+                        object_id_clean = str(object_id).strip()
+                        if object_id_clean:
+                            visualizar_objeto(object_id_clean)
+                        else:
+                             st.error("Por favor, digite um ID de objeto válido.")
+                    else:
+                        st.error("Por favor, digite um ID de objeto")
+                if st.button("Objeto Aleatório"):
+                    query = '''SELECT "Object ID" FROM metobjects WHERE "Is Public Domain" = 'True' AND "Link Resource" != '' ORDER BY RANDOM() LIMIT 1'''
+                    result = executar_consulta(query)
+                    if not result.empty:
+                        random_id = result.iloc[0, 0]
+                        st.info(f"Exibindo objeto aleatório com ID: {random_id}")
+                        visualizar_objeto(random_id)
+                    else:
+                        st.warning("Não foi possível encontrar um objeto aleatório com imagem em domínio público.")
+            with col2:
+                st.subheader("Exemplos de IDs (com imagem)")
+                query = '''SELECT "Object ID", "Object Name", "Title", "Artist Display Name" FROM metobjects WHERE "Is Public Domain" = 'True' AND "Link Resource" != '' ORDER BY RANDOM() LIMIT 30'''
+                df_examples = executar_consulta(query)
+                if not df_examples.empty:
+                    st.dataframe(df_examples)
                 else:
-                    st.error("Por favor, digite um ID de objeto")
-            
-            # Ou selecionar um objeto aleatório
-            if st.button("Objeto Aleatório"):
-                query = """
-                SELECT "Object ID" FROM metobjects 
-                WHERE "Is Public Domain" = 'True' 
-                AND "Link Resource" != '' 
-                ORDER BY RANDOM() 
-                LIMIT 1
-                """
-                result = executar_consulta(query)
-                if len(result) > 0:
-                    random_id = result.iloc[0, 0]
-                    visualizar_objeto(random_id)
-        
-        with col2:
-            # Lista de exemplos
-            st.subheader("Exemplos de IDs")
-            query = """
-            SELECT "Object ID", "Object Name", "Title", "Artist Display Name"
-            FROM metobjects 
-            WHERE "Is Public Domain" = 'True' 
-            AND "Link Resource" != '' 
-            ORDER BY RANDOM() 
-            LIMIT 30
-            """
-            df_examples = executar_consulta(query)
-            st.dataframe(df_examples)
-    
+                    st.info("Não foi possível carregar exemplos.")
+        else:
+             st.warning("Banco de dados MetObjects não disponível para busca por ID.")
+
     elif pagina == "Visualização Personalizada":
-        criar_visualizacao_personalizada()
-    
-    elif pagina == "Consulta SQL":
-        executar_sql_personalizado()
+        st.subheader("📊 Criar Visualização Personalizada")
+        if os.path.exists(DB_PATH):
+            criar_visualizacao_personalizada()
+        else:
+            st.warning("Banco de dados MetObjects não disponível para visualização personalizada.")
         
-    elif pagina == "Consulta com IA":
-        consulta_com_ia()
+    elif pagina == "Consulta SQL":
+        if os.path.exists(DB_PATH):
+            executar_sql_personalizado()
+        else:
+            st.warning("Banco de dados MetObjects não disponível para consulta SQL.")
+
+    # ADICIONADO: Bloco para a nova página Chatbot CSV
+    elif pagina == "Chatbot CSV":
+        chatbot_csv_analyzer()
 
 # Executar o aplicativo
 if __name__ == "__main__":
@@ -1092,6 +1101,10 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         st.error(f"Ocorreu um erro durante a execução do aplicativo: {e}")
+        # Adicionar traceback para debug em ambiente de desenvolvimento
+        import traceback
+        st.error("Detalhes do erro:")
+        st.code(traceback.format_exc())
     finally:
         # O banco de dados será excluído pela função registrada no atexit
         pass 
