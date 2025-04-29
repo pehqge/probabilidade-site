@@ -4,5 +4,4 @@ pandas==2.2.3
 plotly==6.0.1
 streamlit==1.43.2
 google-genai==1.7.0
-scipy==1.11.3
-re==3.0.5
+scipy==1.15.2
