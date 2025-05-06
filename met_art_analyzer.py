@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 # --- Constantes e Funções Auxiliares ---
-CSV_PATH = "resultado_consulta.csv"
+CSV_PATH = "met_data_explorada.csv"
 # Assumindo que 'Object Name' contém 'Painting' ou 'Sculpture'
 # Ajuste se for outra coluna como 'Classification'
 FILTER_COLUMN = "Object Name"
@@ -314,7 +314,9 @@ def consultar_ia_gerar_filtro_pandas(pergunta, df):
     8.  Para verificações de pertencimento a uma lista, use `.isin()` (ex: `df['Country'].isin(["Italy", "France"])`).
     9.  NÃO inclua `import`, `df = ...`, ou qualquer outra coisa além da expressão booleana única.
     10. NÃO adicione explicações, comentários ou qualquer texto fora da expressão.
-    11. Se a pergunta for ambígua ou não puder ser traduzida em um filtro claro, retorne a string 'AMBIGUOUS_QUERY'
+    11. Se a pergunta for ambígua ou não puder ser traduzida em um filtro claro, retorne a string 'AMBIGUOUS_QUERY'1
+    12. MAIS IMPORTANTE: SEMPRE RETORNAR A EXPRESSÃO BOOLEANA PANDAS, NÃO RETORNAR NADA ALÉM DA EXPRESSÃO.
+    13. NAO COLOCAR COMO MARKDOWN MOSTRANDO QUE É PYTHON, APENAS RETORNAR A EXPRESSÃO.
 
     Exemplo 1:
     Pergunta: "Mostrar obras do departamento de pinturas europeias feitas depois de 1800"
